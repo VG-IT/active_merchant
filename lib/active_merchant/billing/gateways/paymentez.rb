@@ -34,7 +34,7 @@ module ActiveMerchant #:nodoc:
         28 => :card_declined
       }.freeze
 
-      SUCCESS_STATUS = ['success', 'pending', 1, 0]
+      SUCCESS_STATUS = ['APPROVED', 'PENDING', 'pending', 'success', 1, 0]
 
       CARD_MAPPING = {
         'visa' => 'vi',
@@ -218,7 +218,7 @@ module ActiveMerchant #:nodoc:
           xid: three_d_secure_options[:xid],
           eci: three_d_secure_options[:eci],
           version: three_d_secure_options[:version],
-          reference_id: three_d_secure_options[:three_ds_server_trans_id],
+          reference_id: three_d_secure_options[:ds_transaction_id],
           status: three_d_secure_options[:authentication_response_status] || three_d_secure_options[:directory_response_status]
         }.compact
 
@@ -237,14 +237,14 @@ module ActiveMerchant #:nodoc:
 
       def commit_raw(object, action, parameters)
         if action == 'inquire'
-          url = "#{(test? ? test_url : live_url)}#{object}/#{parameters}"
+          url = "#{test? ? test_url : live_url}#{object}/#{parameters}"
           begin
             raw_response = ssl_get(url, headers)
           rescue ResponseError => e
             raw_response = e.response.body
           end
         else
-          url = "#{(test? ? test_url : live_url)}#{object}/#{action}"
+          url = "#{test? ? test_url : live_url}#{object}/#{action}"
           begin
             raw_response = ssl_post(url, post_data(parameters), headers)
           rescue ResponseError => e
@@ -262,7 +262,7 @@ module ActiveMerchant #:nodoc:
       def commit_transaction(action, parameters)
         response = commit_raw('transaction', action, parameters)
         Response.new(
-          success_from(response),
+          success_from(response, action),
           message_from(response),
           response,
           authorization: authorization_from(response),
@@ -290,10 +290,12 @@ module ActiveMerchant #:nodoc:
         }
       end
 
-      def success_from(response)
-        return false if response.include?('error')
-
-        SUCCESS_STATUS.include?(response['status'] || response['transaction']['status'])
+      def success_from(response, action = nil)
+        if action == 'refund'
+          response.dig('transaction', 'status_detail') == 7 || SUCCESS_STATUS.include?(response.dig('transaction', 'current_status') || response['status'])
+        else
+          SUCCESS_STATUS.include?(response.dig('transaction', 'current_status') || response['status'])
+        end
       end
 
       def card_success_from(response)
@@ -314,10 +316,10 @@ module ActiveMerchant #:nodoc:
       end
 
       def card_message_from(response)
-        if !response.include?('error')
-          response['message'] || response['card']['message']
-        else
+        if response.include?('error')
           response['error']['type']
+        else
+          response['message'] || response['card']['message']
         end
       end
 

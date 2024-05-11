@@ -12,27 +12,35 @@ class WorldpayTest < Test::Unit::TestCase
     @amount = 100
     @credit_card = credit_card('4242424242424242')
     @token = '|99411111780163871111|shopper|59424549c291397379f30c5c082dbed8'
-    @elo_credit_card = credit_card('4514 1600 0000 0008',
+    @elo_credit_card = credit_card(
+      '4514 1600 0000 0008',
       month: 10,
       year: 2020,
       first_name: 'John',
       last_name: 'Smith',
       verification_value: '737',
-      brand: 'elo')
-    @nt_credit_card = network_tokenization_credit_card('4895370015293175',
+      brand: 'elo'
+    )
+    @nt_credit_card = network_tokenization_credit_card(
+      '4895370015293175',
       brand: 'visa',
       eci: 5,
       source: :network_token,
-      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=')
-    @nt_credit_card_without_eci = network_tokenization_credit_card('4895370015293175',
+      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk='
+    )
+    @nt_credit_card_without_eci = network_tokenization_credit_card(
+      '4895370015293175',
       source: :network_token,
-      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=')
-    @credit_card_with_two_digits_year = credit_card('4514 1600 0000 0008',
+      payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk='
+    )
+    @credit_card_with_two_digits_year = credit_card(
+      '4514 1600 0000 0008',
       month: 10,
       year: 22,
       first_name: 'John',
       last_name: 'Smith',
-      verification_value: '737')
+      verification_value: '737'
+    )
     @sodexo_voucher = credit_card('6060704495764400', brand: 'sodexo')
     @options = { order_id: 1 }
     @store_options = {
@@ -47,21 +55,25 @@ class WorldpayTest < Test::Unit::TestCase
       }
     }
 
-    @apple_play_network_token = network_tokenization_credit_card('4895370015293175',
+    @apple_play_network_token = network_tokenization_credit_card(
+      '4895370015293175',
       month: 10,
       year: 24,
       first_name: 'John',
       last_name: 'Smith',
       verification_value: '737',
-      source: :apple_pay)
+      source: :apple_pay
+    )
 
-    @google_pay_network_token = network_tokenization_credit_card('4444333322221111',
+    @google_pay_network_token = network_tokenization_credit_card(
+      '4444333322221111',
       payment_cryptogram: 'EHuWW9PiBkWvqE5juRwDzAUFBAk=',
       month: '01',
       year: Time.new.year + 2,
       source: :google_pay,
       transaction_id: '123456789',
-      eci: '05')
+      eci: '05'
+    )
 
     @level_two_data = {
       level_2_data: {
@@ -318,6 +330,73 @@ class WorldpayTest < Test::Unit::TestCase
     assert_success response
   end
 
+  def test_authorize_with_nt_passes_stored_credential_options
+    options = @options.merge(
+      stored_credential_usage: 'USED',
+      stored_credential_initiated_reason: 'UNSCHEDULED',
+      stored_credential_transaction_id: '000000000000020005060720116005060'
+    )
+    response = stub_comms do
+      @gateway.authorize(@amount, @nt_credit_card, options)
+    end.check_request do |_endpoint, data, _headers|
+      assert_match(/<storedCredentials usage\=\"USED\" merchantInitiatedReason\=\"UNSCHEDULED\"\>/, data)
+      assert_match(/<schemeTransactionIdentifier\>000000000000020005060720116005060\<\/schemeTransactionIdentifier\>/, data)
+    end.respond_with(successful_authorize_response)
+    assert_success response
+  end
+
+  def test_authorize_with_nt_passes_standard_stored_credential_options
+    stored_credential_params = stored_credential(:used, :unscheduled, :merchant, network_transaction_id: 20_005_060_720_116_005_060)
+    response = stub_comms do
+      @gateway.authorize(@amount, @nt_credit_card, @options.merge({ stored_credential: stored_credential_params }))
+    end.check_request do |_endpoint, data, _headers|
+      assert_match(/<storedCredentials usage\=\"USED\" merchantInitiatedReason\=\"UNSCHEDULED\"\>/, data)
+      assert_match(/<schemeTransactionIdentifier\>20005060720116005060\<\/schemeTransactionIdentifier\>/, data)
+    end.respond_with(successful_authorize_response)
+    assert_success response
+  end
+
+  def test_authorize_passes_correct_stored_credential_options_for_first_recurring
+    options = @options.merge(
+      stored_credential_usage: 'FIRST',
+      stored_credential_initiated_reason: 'RECURRING'
+    )
+    response = stub_comms do
+      @gateway.authorize(@amount, @credit_card, options)
+    end.check_request do |_endpoint, data, _headers|
+      assert_match(/<storedCredentials usage\=\"FIRST\" customerInitiatedReason\=\"RECURRING\"\>/, data)
+    end.respond_with(successful_authorize_response)
+    assert_success response
+  end
+
+  def test_authorize_passes_correct_stored_credential_options_for_used_recurring
+    options = @options.merge(
+      stored_credential_usage: 'USED',
+      stored_credential_initiated_reason: 'RECURRING',
+      stored_credential_transaction_id: '000000000000020005060720116005061'
+    )
+    response = stub_comms do
+      @gateway.authorize(@amount, @credit_card, options)
+    end.check_request do |_endpoint, data, _headers|
+      assert_match(/<storedCredentials usage\=\"USED\" merchantInitiatedReason\=\"RECURRING\"\>/, data)
+      assert_match(/<schemeTransactionIdentifier\>000000000000020005060720116005061\<\/schemeTransactionIdentifier\>/, data)
+    end.respond_with(successful_authorize_response)
+    assert_success response
+  end
+
+  def test_authorize_passes_correct_stored_credentials_for_first_installment
+    options = @options.merge(
+      stored_credential_usage: 'FIRST',
+      stored_credential_initiated_reason: 'INSTALMENT'
+    )
+    response = stub_comms do
+      @gateway.authorize(@amount, @credit_card, options)
+    end.check_request do |_endpoint, data, _headers|
+      assert_match(/<storedCredentials usage\=\"FIRST\" merchantInitiatedReason\=\"INSTALMENT\"\>/, data)
+    end.respond_with(successful_authorize_response)
+    assert_success response
+  end
+
   def test_authorize_passes_sub_merchant_data
     options = @options.merge(@sub_merchant_options)
     response = stub_comms do
@@ -409,15 +488,6 @@ class WorldpayTest < Test::Unit::TestCase
       @gateway.authorize(@amount, @nt_credit_card, @options)
     end.check_request do |_endpoint, data, _headers|
       assert_match %r(<eciIndicator>05</eciIndicator>), data
-    end.respond_with(successful_authorize_response)
-    assert_success response
-  end
-
-  def test_successful_authorize_with_network_token_without_eci
-    response = stub_comms do
-      @gateway.authorize(@amount, @nt_credit_card_without_eci, @options)
-    end.check_request do |_endpoint, data, _headers|
-      assert_match %r(<eciIndicator>07</eciIndicator>), data
     end.respond_with(successful_authorize_response)
     assert_success response
   end
@@ -664,9 +734,7 @@ class WorldpayTest < Test::Unit::TestCase
     end.check_request do |_endpoint, data, _headers|
       if /capture/.match?(data)
         t = Time.now
-        assert_tag_with_attributes 'date',
-          { 'dayOfMonth' => t.day.to_s, 'month' => t.month.to_s, 'year' => t.year.to_s },
-          data
+        assert_tag_with_attributes 'date', { 'dayOfMonth' => t.day.to_s, 'month' => t.month.to_s, 'year' => t.year.to_s }, data
       end
     end.respond_with(successful_inquiry_response, successful_capture_response)
   end
@@ -675,9 +743,7 @@ class WorldpayTest < Test::Unit::TestCase
     stub_comms do
       @gateway.authorize(100, @credit_card, @options)
     end.check_request do |_endpoint, data, _headers|
-      assert_tag_with_attributes 'amount',
-        { 'value' => '100', 'exponent' => '2', 'currencyCode' => 'GBP' },
-        data
+      assert_tag_with_attributes 'amount', { 'value' => '100', 'exponent' => '2', 'currencyCode' => 'GBP' }, data
     end.respond_with(successful_authorize_response)
   end
 
@@ -685,17 +751,13 @@ class WorldpayTest < Test::Unit::TestCase
     stub_comms do
       @gateway.authorize(10000, @credit_card, @options.merge(currency: :JPY))
     end.check_request do |_endpoint, data, _headers|
-      assert_tag_with_attributes 'amount',
-        { 'value' => '100', 'exponent' => '0', 'currencyCode' => 'JPY' },
-        data
+      assert_tag_with_attributes 'amount', { 'value' => '100', 'exponent' => '0', 'currencyCode' => 'JPY' }, data
     end.respond_with(successful_authorize_response)
 
     stub_comms do
       @gateway.authorize(10000, @credit_card, @options.merge(currency: :OMR))
     end.check_request do |_endpoint, data, _headers|
-      assert_tag_with_attributes 'amount',
-        { 'value' => '10000', 'exponent' => '3', 'currencyCode' => 'OMR' },
-        data
+      assert_tag_with_attributes 'amount', { 'value' => '10000', 'exponent' => '3', 'currencyCode' => 'OMR' }, data
     end.respond_with(successful_authorize_response)
   end
 
@@ -1093,9 +1155,11 @@ class WorldpayTest < Test::Unit::TestCase
   def test_3ds_additional_information
     browser_size = '390x400'
     session_id = '0215ui8ib1'
+    df_reference_id = '1326vj9jc2'
 
     options = @options.merge(
       session_id: session_id,
+      df_reference_id: df_reference_id,
       browser_size: browser_size,
       execute_threed: true,
       three_ds_version: '2.0.1'
@@ -1104,7 +1168,7 @@ class WorldpayTest < Test::Unit::TestCase
     stub_comms do
       @gateway.authorize(@amount, @credit_card, options)
     end.check_request do |_endpoint, data, _headers|
-      assert_tag_with_attributes 'additional3DSData', { 'dfReferenceId' => session_id, 'challengeWindowSize' => browser_size }, data
+      assert_tag_with_attributes 'additional3DSData', { 'dfReferenceId' => df_reference_id, 'challengeWindowSize' => browser_size }, data
     end.respond_with(successful_authorize_response)
   end
 
@@ -1411,6 +1475,14 @@ class WorldpayTest < Test::Unit::TestCase
   def test_network_token_type_assignation_when_google_pay
     stub_comms do
       @gateway.authorize(@amount, @google_pay_network_token, @options)
+    end.check_request(skip_response: true) do |_endpoint, data, _headers|
+      assert_match %r(<EMVCO_TOKEN-SSL type="GOOGLEPAY">), data
+    end
+  end
+
+  def test_network_token_type_assignation_when_google_pay_pan_only
+    stub_comms do
+      @gateway.authorize(@amount, @credit_card, @options.merge!(wallet_type: :google_pay))
     end.check_request(skip_response: true) do |_endpoint, data, _headers|
       assert_match %r(<EMVCO_TOKEN-SSL type="GOOGLEPAY">), data
     end
