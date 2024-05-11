@@ -152,6 +152,10 @@ module ActiveMerchant #:nodoc:
         commit(:post, "charges/#{CGI.escape(identification)}/refunds", post, options)
       end
 
+      def retrive(identification, options = {})
+        api_request(:get, "charges/#{CGI.escape(identification)}", nil, options)
+      end
+
       def refund(money, identification, options = {})
         post = {}
         add_amount(post, money, options)
